@@ -1,0 +1,98 @@
+version: "3.8"
+services:
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: nacos-standalone
+    env_file:
+      - ./env/nacos-mysql.env
+    networks:
+      - local-dev-net
+    volumes:
+      - ./volumes/nacos/logs:/home/nacos/logs
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+      - "9849:9849"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: always
+  mysql:
+    container_name: mysql-standalone
+    image: mysql:8.0
+    env_file: ./env/mysql.env
+    networks:
+      - local-dev-net
+    volumes:
+      - ./volumes/mysql/data:/var/lib/mysql
+      - ./volumes/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: [ "CMD", "mysqladmin" ,"ping", "-h", "localhost" ]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+  redis:
+    container_name: redis-standalone
+    image: redis:7.0
+    networks:
+      - local-dev-net
+    volumes:
+      - ./volumes/redis/data:/data
+      - ./volumes/redis/redis.conf:/usr/local/etc/redis/redis.conf
+      - ./volumes/redis/logs:/logs
+    ports:
+      - "6379:6379"
+  namesrv:
+    image: apache/rocketmq:5.1.4
+    container_name: rmqnamesrv
+    ports:
+      - 9876:9876
+    networks:
+      - local-dev-net
+    command: sh mqnamesrv
+  broker:
+    image: apache/rocketmq:5.1.4
+    container_name: rmqbroker
+    ports:
+      - 10909:10909
+      - 10911:10911
+      - 10912:10912
+    environment:
+      - NAMESRV_ADDR=rmqnamesrv:9876
+    depends_on:
+      - namesrv
+    networks:
+      - local-dev-net
+    command: sh mqbroker
+  proxy:
+    image: apache/rocketmq:5.1.4
+    container_name: rmqproxy
+    networks:
+      - local-dev-net
+    depends_on:
+      - broker
+      - namesrv
+    ports:
+      - 8080:8080
+      - 8081:8081
+    restart: on-failure
+    environment:
+      - NAMESRV_ADDR=rmqnamesrv:9876
+    command: sh mqproxy
+  rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:latest
+    container_name: rocketmq-dashboard
+    environment:
+      - JAVA_OPTS=-Drocketmq.namesrv.addr=rmqnamesrv:9876
+    ports:
+      - "8082:8080"
+    networks:
+      - local-dev-net
+    restart: on-failure
+    depends_on:
+      - proxy
+networks:
+  local-dev-net:
+    driver: bridge
